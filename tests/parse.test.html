@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parser tests</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 16px; background: #f2f2f3; color: #1d1f20; }
+  .pass { color: #416180; } .fail { color: #b3261e; font-weight: 600; }
+  pre { margin: 0 0 0 16px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Tag parser</h1>
+<p>Fixture: a Vision response laid out like <code>tag-sample.webp</code> (730×548). Optional: paste a real Vision JSON response below to see what it parses to.</p>
+<div id="out"></div>
+<textarea id="raw" rows="6" style="width:100%" placeholder="Paste a Vision images:annotate response here"></textarea>
+<button id="go">Parse pasted JSON</button>
+<pre id="raw-out"></pre>
+<script type="module">
+import { parseTag, weakestField, titleCase } from '../js/parse.js';
+
+// [text, x0, y0, x1, y1, confidence] — coordinates read off tests/tag-sample.webp.
+const SAMPLE = [
+  ['1129578', 95, 45, 345, 100, 0.98],
+  ["MARIANNE'S", 62, 105, 315, 140, 0.97],
+  ['AVOCADO', 62, 145, 245, 180, 0.96], ['OIL', 255, 145, 340, 180, 0.99],
+  ['2', 62, 188, 80, 215, 0.95], ['L', 95, 188, 115, 215, 0.93],
+  ['PRICE', 65, 282, 110, 295, 0.9], ['PER', 113, 282, 140, 295, 0.9], ['LITER', 143, 282, 195, 295, 0.9],
+  ['SELL', 540, 285, 580, 298, 0.9], ['PRICE', 583, 285, 630, 298, 0.9],
+  ['9.995', 65, 312, 160, 340, 0.94],
+  ['19', 350, 300, 470, 395, 0.99], ['.', 475, 370, 500, 395, 0.97], ['99', 505, 300, 655, 395, 0.99],
+  ['1/23/23', 615, 400, 655, 410, 0.8],
+];
+
+function vision(words) {
+  return { fullTextAnnotation: { pages: [{ blocks: [{ paragraphs: [{ words: words.map(([text, x0, y0, x1, y1, confidence]) => ({
+    confidence,
+    boundingBox: { vertices: [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }] },
+    symbols: [...text].map(c => ({ text: c, confidence })),
+  })) }] }] }] } };
+}
+const edit = (i, patch) => SAMPLE.map((w, j) => j === i ? Object.assign([...w], patch) : w);
+
+const results = [];
+const eq = (name, got, want) => results.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
+
+const p = parseTag(vision(SAMPLE), 548);
+eq('item number', p.sku, '1129578');
+eq('description, title case', p.desc, "Marianne's Avocado Oil 2 L");
+eq('price merged from "19" "." "99", unit price ignored', p.price, '19.99');
+eq('field confidence = min word confidence', p.conf, { sku: 98, desc: 93, price: 97 });
+eq('clean read is not held at 80%', weakestField(p, 80), null);
+eq('held at 95% on the description', weakestField(p, 95), { field: 'desc', conf: 93 });
+
+const lowPrice = parseTag(vision(edit(12, { 5: 0.61 })), 548);
+eq('low-confidence price is held', weakestField(lowPrice, 80), { field: 'price', conf: 61 });
+
+const oneToken = parseTag(vision([...SAMPLE.slice(0, 12), ['$19.99', 350, 300, 655, 395, 0.99]]), 548);
+eq('single "$19.99" token', oneToken.price, '19.99');
+
+const noSku = parseTag(vision(SAMPLE.slice(1)), 548);
+eq('missing item number fails its pattern', weakestField(noSku, 80), { field: 'sku', conf: 0 });
+
+eq('titleCase', titleCase('SUNVALE KETTLE CORN 1.1 KG'), 'Sunvale Kettle Corn 1.1 Kg');
+
+const out = document.getElementById('out');
+out.innerHTML = results.map(r => r.ok
+  ? `<div class="pass">✓ ${r.name}</div>`
+  : `<div class="fail">✗ ${r.name}</div><pre>got  ${JSON.stringify(r.got)}\nwant ${JSON.stringify(r.want)}</pre>`).join('')
+  + `<p><b>${results.filter(r => r.ok).length}/${results.length} passed</b></p>`;
+document.title = results.every(r => r.ok) ? 'PASS' : 'FAIL';
+
+document.getElementById('go').onclick = () => {
+  try {
+    const j = JSON.parse(document.getElementById('raw').value);
+    document.getElementById('raw-out').textContent = JSON.stringify(parseTag(j.responses ? j.responses[0] : j), null, 2);
+  } catch (e) { document.getElementById('raw-out').textContent = String(e); }
+};
+</script>
+</body>
+</html>
