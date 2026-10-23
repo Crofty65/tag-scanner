@@ -2,7 +2,7 @@
 
 import * as S from './store.js';
 import { state } from './store.js';
-import { app, recentsView, currentTab } from './views.js';
+import { app, recentsView, currentTab, AUTO_TEXT } from './views.js';
 import { startCamera, stopCamera, captureCrop, torchSupported, setTorch, createAutoDetector } from './camera.js';
 
 const root = document.getElementById('app');
@@ -73,8 +73,28 @@ function patchLive() {
 // ── camera, Auto, wake lock ──────────────────────────────────────────────
 
 let cameraOn = false, cameraStarting = false, wakeLock = null;
-const auto = createAutoDetector(() => doCapture());
 const reticle = () => root.querySelector('[data-reticle]');
+
+const canCapture = () => {
+  const ui = state.ui;
+  return cameraOn && !ui.busy && !ui.dupe && !ui.endConfirm && !ui.camError;
+};
+
+// Auto's label shows what it is waiting for; updated in place, ~8 times a second.
+const debugAuto = location.search.includes('debug');
+function onAutoStatus(status, n) {
+  state.ui.autoStatus = status;
+  const el = root.querySelector('[data-auto-label]');
+  if (!el) return;
+  el.textContent = AUTO_TEXT[status] + (debugAuto
+    ? ` · shake ${n.shake.toFixed(1)} · moved ${n.moved.toFixed(1)} · tag ${Math.round(n.share * 100)}%` : '');
+}
+
+const auto = createAutoDetector(() => {
+  if (!canCapture()) return false;
+  doCapture();
+  return true;
+}, onAutoStatus);
 
 function syncLifecycle() {
   const ui = state.ui;
@@ -115,7 +135,7 @@ function cameraMessage(e) {
 
 async function doCapture() {
   const ui = state.ui;
-  if (ui.busy || ui.dupe || ui.endConfirm || ui.camError || !cameraOn) return;
+  if (!canCapture()) return;
   ui.busy = true; ui.flash = true;
   render();
   setTimeout(() => { ui.flash = false; render(); }, 160);

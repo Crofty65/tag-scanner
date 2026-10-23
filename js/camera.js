@@ -52,38 +52,54 @@ export function captureCrop(video, reticle) {
     c.toBlob(b => b ? resolve({ blob: b, width: c.width, height: c.height }) : reject(new Error('Capture failed')), 'image/jpeg', 0.8));
 }
 
-// Auto mode: sample ~8 fps into a 64×48 grayscale buffer. Fire when the frame has been
-// still for ~600 ms and the reticle is mostly bright (a tag is present). After firing,
-// re-arm only once the view changes a lot (user moved to the next tag).
-const W = 64, H = 48;
-const STILL = 6, MOVED = 22, BRIGHT = 130, STEADY_MS = 600;
+// Auto mode: sample ~8 fps into a small grayscale buffer. Fire when a tag fills enough of the
+// reticle (a good share of bright pixels) and the view has been steady for STEADY_MS. After
+// firing, re-arm only once the view changes a lot (user moved to the next tag).
+// The small buffer averages out hand shake and sensor noise; tune the constants on the phone
+// with ?debug in the URL, which prints the live numbers above the reticle.
+const W = 32, H = 24;
+const STILL = 10;          // mean frame-to-frame difference (0–255) that counts as steady
+const MOVED = 18;          // difference from the captured frame that re-arms
+const BRIGHT_LEVEL = 140;  // a pixel this bright counts as tag paper
+const BRIGHT_SHARE = 0.35; // share of bright pixels that means a tag is in the reticle
+const STEADY_MS = 500;
 
-export function createAutoDetector(onTrigger) {
+// onTrigger returns false when a capture can't start (still reading, dialog open), so it stays armed.
+// onStatus gets 'search' | 'steady' | 'next' plus the raw numbers.
+export function createAutoDetector(onTrigger, onStatus = () => {}) {
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const ctx = c.getContext('2d', { willReadFrequently: true });
   let prev = null, ref = null, stillSince = 0, armed = true, timer = null;
+  const diff = (a, b) => { let d = 0; for (let i = 0; i < a.length; i++) d += Math.abs(a[i] - b[i]); return d / a.length; };
 
   function sample(video, reticle) {
-    if (!video.videoWidth) return;
+    if (!video.videoWidth || !reticle) return;
     const { sx, sy, sw, sh } = sourceRect(video, reticle);
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, W, H);
     const px = ctx.getImageData(0, 0, W, H).data;
     const g = new Uint8Array(W * H);
-    let sum = 0;
+    let bright = 0;
     for (let i = 0; i < g.length; i++) {
       g[i] = (px[i * 4] * 77 + px[i * 4 + 1] * 150 + px[i * 4 + 2] * 29) >> 8;
-      sum += g[i];
+      if (g[i] >= BRIGHT_LEVEL) bright++;
     }
-    const diff = (a, b) => { let d = 0; for (let i = 0; i < a.length; i++) d += Math.abs(a[i] - b[i]); return d / a.length; };
     const now = performance.now();
-    if (!armed && ref && diff(g, ref) > MOVED) armed = true;
-    if (prev && diff(g, prev) < STILL) { if (!stillSince) stillSince = now; } else stillSince = 0;
+    const shake = prev ? diff(g, prev) : 255;
+    const moved = ref ? diff(g, ref) : 255;
+    const share = bright / g.length;
+    const tag = share >= BRIGHT_SHARE;
     prev = g;
-    if (armed && stillSince && now - stillSince > STEADY_MS && sum / g.length > BRIGHT) {
-      armed = false; ref = g; stillSince = 0;
-      onTrigger();
+
+    if (!armed && moved > MOVED) armed = true;
+    if (tag && shake < STILL) { if (!stillSince) stillSince = now; } else stillSince = 0;
+
+    let status = !armed ? 'next' : stillSince ? 'steady' : 'search';
+    if (armed && stillSince && now - stillSince >= STEADY_MS) {
+      stillSince = 0;
+      if (onTrigger()) { armed = false; ref = g; status = 'next'; }
     }
+    onStatus(status, { shake, moved, share });
   }
 
   return {

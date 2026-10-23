@@ -6,10 +6,11 @@
 export const SKU_RE = /^\d{4,8}$/;
 const PRICE_TOKEN_RE = /^\d{1,4}\.\d{2}$/;
 
+// Words with digits (model numbers, 4K, 5.1CH) keep their capitals.
 export function titleCase(s) {
-  return s.toLowerCase()
-    .replace(/(^|\s|')\S/g, m => m.toUpperCase())
-    .replace(/'S\b/g, "'s");
+  return s.split(/\s+/).map(w => /\d/.test(w) ? w.toUpperCase() : w.toLowerCase()
+    .replace(/(^|[('"/-])([a-z])/g, (m, p, c) => p + c.toUpperCase())
+    .replace(/'s\b/gi, "'s")).join(' ');
 }
 
 function box(vertices = []) {
@@ -54,6 +55,9 @@ export function lines(ws) {
   for (const l of out) {
     l.words.sort((a, b) => a.x0 - b.x0);
     l.text = l.words.map(w => w.text).join(' ');
+    // Typical letter height of the line (the union box is inflated by merged neighbours).
+    const hs = l.words.map(w => w.h).sort((a, b) => a - b);
+    l.wh = hs[Math.floor(hs.length / 2)];
   }
   return out.sort((a, b) => a.cy - b.cy);
 }
@@ -83,23 +87,44 @@ function mergePriceTokens(line) {
 
 const pct = c => Math.round(c * 100);
 
+const MAX_DESC_LINES = 4;
+const STOP_RE = /PRICE\s*PER|SELL\s*PRICE/i;
+const BULLET_RE = /^[•●▪■◦·*]/;
+
+// Feature bullets: start with a bullet glyph, or are mostly lowercase (descriptions are printed in capitals).
+function isFeatureLine(l) {
+  if (BULLET_RE.test(l.text)) return true;
+  const letters = l.text.replace(/[^A-Za-z]/g, '');
+  const lower = l.text.replace(/[^a-z]/g, '').length;
+  return letters.length >= 4 && lower / letters.length > 0.3;
+}
+
 export function parseTag(resp, imageHeight) {
   const ws = words(resp);
   const ls = lines(ws);
   const bottom = imageHeight || Math.max(0, ...ws.map(w => w.y1));
   const top = imageHeight ? 0 : Math.min(...ws.map(w => w.y0));
 
-  // Item number: the 4–8 digit token with the smallest y, preferring the top third.
-  const skuCands = ws.filter(w => SKU_RE.test(w.text)).sort((a, b) => a.y0 - b.y0);
-  const skuWord = skuCands.find(w => w.cy < top + (bottom - top) / 3) || skuCands[0];
+  // Item number: the tallest 4–8 digit token in the top half (fine print above the tag can hold digits too).
+  const skuCands = ws.filter(w => SKU_RE.test(w.text));
+  const topHalf = skuCands.filter(w => w.cy < top + (bottom - top) / 2);
+  const skuWord = (topHalf.length ? topHalf : skuCands).sort((a, b) => b.h - a.h || a.y0 - b.y0)[0];
   const skuLine = skuWord ? ls.find(l => l.words.includes(skuWord)) : null;
 
-  // Description: lines between the item number and "PRICE PER …" (or "SELL PRICE" / a price line as fallback).
+  // Description: the run of large-type lines right under the item number. It ends at the first
+  // bullet / feature line (smaller or mixed-case text), "PRICE PER …", "SELL PRICE", or the big price.
   const startIdx = skuLine ? ls.indexOf(skuLine) + 1 : 0;
-  let endIdx = ls.findIndex((l, i) => i >= startIdx && /PRICE\s*PER/i.test(l.text));
-  if (endIdx < 0) endIdx = ls.findIndex((l, i) => i >= startIdx && (/SELL/i.test(l.text) || mergePriceTokens(l).length));
-  if (endIdx < 0) endIdx = ls.length;
-  const descLines = ls.slice(startIdx, endIdx);
+  const descLines = [];
+  let refH = 0;
+  for (let i = startIdx; i < ls.length && descLines.length < MAX_DESC_LINES; i++) {
+    const l = ls[i], prev = descLines[descLines.length - 1];
+    if (STOP_RE.test(l.text) || isFeatureLine(l)) break;
+    if (mergePriceTokens(l).some(p => p.h > l.wh * 1.3)) break;
+    if (refH && l.wh < refH * 0.7) break;
+    if (prev && l.y0 - prev.y1 > Math.max(refH, l.wh) * 1.2) break;
+    descLines.push(l);
+    refH = Math.max(refH, l.wh);
+  }
   const descWords = descLines.flatMap(l => l.words);
   const desc = titleCase(descLines.map(l => l.text).join(' ').replace(/\s+/g, ' ').trim());
 

@@ -127,6 +127,8 @@ export function recentsView() {
   </div>`;
 }
 
+export const AUTO_TEXT = { search: 'AUTO · HOLD STEADY ON A TAG', steady: 'AUTO · HOLD STILL…', next: 'AUTO · MOVE TO THE NEXT TAG' };
+
 function scan() {
   const ui = state.ui, auto = state.settings.mode === 'auto';
   const ses = sessionScans();
@@ -146,7 +148,7 @@ function scan() {
           ${showSync ? `<button class="chip-light" data-act="go" data-v="review">${icon('wifi-off', 14)}<span>${ui.syncing ? 'Sending ' + waitN + '…' : 'No signal · ' + waitN + ' waiting'}</span></button>` : ''}
         </div>
         <div class="reticle${auto ? ' auto' : ''}" data-reticle>
-          ${auto ? '<span class="reticle-label">AUTO · HOLD STEADY ON A TAG</span>' : ''}
+          ${auto ? `<span class="reticle-label" data-auto-label>${AUTO_TEXT[ui.autoStatus] || AUTO_TEXT.search}</span>` : ''}
           <i class="br-tl"></i><i class="br-tr"></i><i class="br-bl"></i><i class="br-br"></i>
         </div>
         ${toastView()}
