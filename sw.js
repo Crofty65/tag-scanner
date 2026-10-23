@@ -1,5 +1,5 @@
 // Caches the app shell so the app opens with no signal. Vision and Apps Script calls always go to the network.
-const VERSION = 'pts-v1';
+const VERSION = 'pts-v2';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest',
   'css/industry.css', 'css/app.css',
