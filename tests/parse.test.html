@@ -64,6 +64,50 @@ eq('missing item number fails its pattern', weakestField(noSku, 80), { field: 's
 
 eq('titleCase', titleCase('SUNVALE KETTLE CORN 1.1 KG'), 'Sunvale Kettle Corn 1.1 Kg');
 
+// Feature-bullet tags (2000×1500 photos). Bullet text is small, mixed case and read with low confidence;
+// it must not end up in the description or drag its confidence down.
+const row = (y, parts, conf) => { let x = 330; return parts.map(t => { const w = [t, x, y, x + t.length * 22, y + 40, conf]; x += t.length * 22 + 18; return w; }); };
+const TV = [
+  ['$22', 950, 40, 1010, 70, 0.7], ['BN68-24804A-00', 420, 160, 500, 170, 0.4],
+  ['9650888', 480, 300, 865, 375, 0.98],
+  ['SAMSUNG', 375, 405, 840, 470, 0.95], ['50U8000H', 870, 405, 1290, 470, 0.95], ['50"', 1310, 405, 1450, 470, 0.93],
+  ['50"', 375, 490, 520, 560, 0.94], ['CLASS', 550, 490, 840, 560, 0.96], ['(49.5"', 870, 490, 1120, 575, 0.92], ['DIAG)', 1140, 490, 1400, 575, 0.94],
+  ['4K', 375, 585, 500, 650, 0.97], ['UHD', 525, 585, 730, 650, 0.96], ['LED', 760, 585, 945, 650, 0.97], ['LCD', 975, 585, 1165, 650, 0.97], ['TV', 1190, 585, 1310, 650, 0.98],
+  ...row(675, ['•', '60Hz', 'Refresh', 'Rate', '•', '*90', 'Day', 'Return', 'Policy'], 0.3),
+  ...row(730, ['•', 'Crystal', 'Processor', '4K', '•', '3Yr', 'Manufacturer', 'Warranty'], 0.35),
+  ...row(785, ['•', '43.7"W', 'x', '25.3"H', 'x', '3"D', '•', 'Smart', 'TV', 'w/Apps'], 0.4),
+  ...row(835, ['•', '27.4"H', 'x', '7.8"D', 'w/stand'], 0.3),
+  ['CA', 330, 1100, 385, 1140, 0.9], ['E-WASTE', 400, 1100, 605, 1140, 0.9], ['6.00', 630, 1100, 715, 1140, 0.9],
+  ['249', 840, 900, 1340, 1140, 0.99], ['.', 1355, 1090, 1410, 1140, 0.95], ['99', 1430, 900, 1780, 1140, 0.99],
+  ['10/01/26', 1710, 1160, 1760, 1175, 0.6],
+];
+const tv = parseTag(vision(TV), 1500);
+eq('TV: item number (ignores fine print above the tag)', tv.sku, '9650888');
+eq('TV: three description lines, bullets left out', tv.desc, 'Samsung 50U8000H 50" 50" Class (49.5" Diag) 4K Uhd Led Lcd Tv');
+eq('TV: price, e-waste fee ignored', tv.price, '249.99');
+eq('TV: not held at 80%', weakestField(tv, 80), null);
+
+const SOUNDBAR = [
+  ['2012476', 360, 330, 1000, 480, 0.97],
+  ['TCL', 300, 500, 480, 555, 0.96],
+  ['Q6CH', 300, 580, 550, 650, 0.93], ['5.1CH', 570, 580, 870, 650, 0.92], ['SOUNDBAR', 890, 580, 1415, 650, 0.96],
+  ['W/SUBWOOFER', 300, 665, 1025, 740, 0.95],
+  ...row(760, ['●', 'Up', 'to', '580', 'Watts', 'of', 'Power', '●Dolby', 'Atmos', 'Audio'], 0.3),
+  ...row(805, ['●', 'HDMI,', 'BT', '&', 'Optical', 'Inputs', '●TCL', 'Mobile', 'App', 'for', 'Auto'], 0.3),
+  ...row(850, ['●', 'Side-Firing', 'Speakers', '●', 'Room', 'Audio', 'Calibration'], 0.3),
+  ['299', 830, 970, 1330, 1180, 0.99], ['.', 1350, 1130, 1410, 1180, 0.96], ['99', 1440, 970, 1740, 1180, 0.99],
+  ['10/12/26', 1620, 1185, 1710, 1205, 0.6],
+];
+const sb = parseTag(vision(SOUNDBAR), 1500);
+eq('Soundbar: item number', sb.sku, '2012476');
+eq('Soundbar: description', sb.desc, 'Tcl Q6CH 5.1CH Soundbar W/Subwoofer');
+eq('Soundbar: price', sb.price, '299.99');
+eq('Soundbar: confidence ignores bullets', sb.conf, { sku: 97, desc: 92, price: 96 });
+
+// Same tag with the bullet glyphs dropped by Vision and the text in capitals: size alone must stop it.
+const SB_CAPS = SOUNDBAR.map(w => w[2] >= 760 && w[2] < 900 ? [w[0].replace(/^●/, '').toUpperCase() || '-', w[1], w[2], w[3], w[4], w[5]] : w);
+eq('Soundbar: smaller type ends the description', parseTag(vision(SB_CAPS), 1500).desc, 'Tcl Q6CH 5.1CH Soundbar W/Subwoofer');
+
 const out = document.getElementById('out');
 out.innerHTML = results.map(r => r.ok
   ? `<div class="pass">✓ ${r.name}</div>`
